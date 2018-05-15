@@ -9,6 +9,7 @@ Created on Sun Feb 18 19:00:58 2018
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import re
 import seaborn as sns
 import sklearn as sk
 import statsmodels.api as sm
@@ -42,6 +43,17 @@ def submit(filename, model):
     submission = pd.DataFrame(submission_df)
     submission.to_csv(filename,index=False)
 
+def get_title(name):
+    title_search = re.search(' ([A-Za-z]+)\.', name)
+    # If the title exists, extract and return it.
+    if title_search:
+        return title_search.group(1)
+    return ""
+
+def get_first_letter(name):
+    if (name == "nan") or (len(name) == 0):
+        return ""
+    return name[0]
 
 train = pd.read_csv('train.csv', header = 0)
 test = pd.read_csv('test.csv', header = 0)
@@ -50,33 +62,77 @@ full_data = [train, test]
 #gender_submission = pd.read_csv('gender_submission.csv')
 
 for dataset in full_data: 
-    mean_age = np.mean(dataset.Age)
-    dataset.Age = dataset.Age.fillna(mean_age)
+    mean_female = np.mean(dataset[dataset["Sex"] == "female"]["Age"])
+    mean_male = np.mean(dataset[dataset["Sex"] == "male"]["Age"])
+    
+    mean_age = list(dataset.groupby(["Pclass", "Sex"]).Age.mean())
+    
+    ind = 0
+    for pclass in range(1,4):
+        for sex in ["female","male"]:
+            #df = dataset[(dataset.Sex == sex) & (dataset.Pclass == pclass)]["Age"].fillna(mean_age[ind])
+            null_items = dataset[(dataset.Sex == sex) & (dataset.Pclass == pclass)].Age.isnull()
+            indices = null_items.index.values[list(null_items)]
+            for i in indices:
+                dataset.loc[i,"Age"] = mean_age[ind]
+            ind = ind + 1
+            
+    #dataset["Age"] = dataset["Age"].fillna(mean_age)
     dataset['Embarked'] = dataset['Embarked'].fillna('S')
-    dataset['FamilySize'] = dataset['Parch'] + dataset['SibSp']
+    dataset['FamilySize'] = dataset['Parch'] + dataset['SibSp'] + 1
     dataset['Fare'] = dataset['Fare'].fillna(np.mean(dataset.Fare))
+    dataset['Cabin'] = dataset['Cabin'].astype(str)
+    dataset['Cabin'] = dataset['Cabin'].apply(get_first_letter)
     
     
+    
+ # Mapping Age
+for dataset in full_data:
+    dataset.loc[ dataset['Age'] <= 15, 'CategoricalAge'] = 0
+    dataset.loc[(dataset['Age'] > 15) & (dataset['Age'] <= 40), 'CategoricalAge'] = 1
+    dataset.loc[(dataset['Age'] > 40) & (dataset['Age'] <= 60), 'CategoricalAge'] = 2
+    dataset.loc[ dataset['Age'] > 60, 'CategoricalAge'] = 3 
+    dataset.CategoricalAge = dataset.CategoricalAge.astype(int)
+
+ # Mapping Sex
+for dataset in full_data:
+    dataset['Sex'] = dataset['Sex'].map( {'female': 0, 'male': 1} ).astype(int)
+    
+        
+ # Mapping FamilySize
+for dataset in full_data:
+    dataset.loc[ dataset['FamilySize'] == 1, 'CategoricalFamilySize'] = 0
+    dataset.loc[(dataset['FamilySize'] > 1) & (dataset['FamilySize'] <= 4), 'CategoricalFamilySize'] = 1
+    dataset.loc[(dataset['FamilySize'] > 4), 'CategoricalFamilySize'] = 2
+    dataset.CategoricalFamilySize = dataset.CategoricalFamilySize.astype(int)
 
 
-#for dataset in full_data:
-#    print(dataset[dataset['Pclass']==1]['Fare'].describe())
-#    print(dataset[dataset['Pclass']==2]['Fare'].describe())
-#    print(dataset[dataset['Pclass']==3]['Fare'].describe())
-#    print('_'*20)
+ # Mapping Fare
+for dataset in full_data:
+    dataset.loc[ dataset['Fare'] < 15, 'CategoricalFare'] = 0
+    #dataset.loc[ (dataset['Fare'] >= 15) & (dataset['Fare'] < 50), 'CategoricalFare'] = 0
+    dataset.loc[ dataset['Fare'] >= 15, 'CategoricalFare'] = 1
+    dataset.CategoricalFare = dataset.CategoricalFare.astype(int)
 
-#    size = 10
-#    age_min = np.min(dataset.Age)
-#    age_max = np.max(dataset.Age)
-#    nbCategories = ceil((age_max - age_min)/size)
-#    for i in range(0, nbCategories):
-#        print(i," = ",[age_min,age_min+size])
-#        dataset.loc[(dataset['Age'] >= age_min) & (dataset['Age'] < age_min+size), 'CategoricalAge'] = i
-#        age_min = age_min+size
-#    dataset.loc[ dataset['Age'] <= 15, 'CategoricalAge'] = 0
-#    dataset.loc[(dataset['Age'] > 15) & (dataset['Age'] <= 40), 'CategoricalAge'] = 1
-#    dataset.loc[(dataset['Age'] > 40) & (dataset['Age'] <= 60), 'CategoricalAge'] = 2
-#    dataset.loc[ dataset['Age'] > 60, 'CategoricalAge'] = 3 ;
+
+for dataset in full_data:
+    
+    dataset['Title'] = dataset['Name'].apply(get_title)
+# Group all non-common titles into one single grouping "Rare"
+    dataset['Title'] = dataset['Title'].replace(['Lady', 'Countess','Capt', 'Col','Don', 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer', 'Dona'], 'Rare')
+
+    dataset['Title'] = dataset['Title'].replace('Mlle', 'Miss')
+    dataset['Title'] = dataset['Title'].replace('Ms', 'Miss')
+    dataset['Title'] = dataset['Title'].replace('Mme', 'Mrs')
+    
+    # Mapping titles
+    title_mapping = {"Mr": 1, "Miss": 2, "Mrs": 3, "Master": 4, "Rare": 5}
+    dataset['Title'] = dataset['Title'].map(title_mapping)
+    dataset['Title'] = dataset['Title'].fillna(0)
+
+    
+    # Mapping Embarked
+    dataset['Embarked'] = dataset['Embarked'].map( {'S': 0, 'C': 1, 'Q': 2} ).astype(int)
 
 
 
@@ -88,8 +144,10 @@ died["Age"].plot.hist(alpha=0.5,color='blue',bins=50)
 plt.legend(['Survived','Died'])
 plt.show()
 
-survived["Fare"].plot.hist(alpha=0.5,color='red',bins=50)
-died["Fare"].plot.hist(alpha=0.5,color='blue',bins=50)
+f_min = 50
+f_max = 150
+survived[(survived["Fare"] > f_min) & (survived["Fare"] < f_max)]["Fare"].plot.hist(alpha=0.5,color='red',bins=50)
+died[(died["Fare"] > f_min) & (died["Fare"] < f_max)]["Fare"].plot.hist(alpha=0.5,color='blue',bins=50)
 plt.legend(['Survived','Died'])
 plt.show()
 
@@ -148,33 +206,20 @@ table.div(table.sum(1).astype(float), axis=0).plot(kind='bar', stacked=True)
 
 ''' -------------------------------------------------------------------- '''
 
+table = pd.crosstab(train.Survived,train.Title)
+table.div(table.sum(1).astype(float), axis=0).plot(kind='bar', stacked=True)
+
+table = pd.crosstab(train.Title,train.Survived)
+table.div(table.sum(1).astype(float), axis=0).plot(kind='bar', stacked=True)
+
+''' -------------------------------------------------------------------- '''
+
 
 #for col in train.columns:
 #    if col not in ['Survived','PassengerId','Name','Age'] :
 #        table = pd.crosstab(train['Survived'],train[col])
 #        table.div(table.sum(1).astype(float), axis=0).plot(kind='bar', stacked=True)
 
- # Mapping Age
-for dataset in full_data:
-    dataset.loc[ dataset['Age'] <= 15, 'CategoricalAge'] = 0
-    dataset.loc[(dataset['Age'] > 15) & (dataset['Age'] <= 40), 'CategoricalAge'] = 1
-    dataset.loc[(dataset['Age'] > 40) & (dataset['Age'] <= 60), 'CategoricalAge'] = 2
-    dataset.loc[ dataset['Age'] > 60, 'CategoricalAge'] = 3 
-    dataset.CategoricalAge = dataset.CategoricalAge.astype(int)
-
- # Mapping FamilySize
-for dataset in full_data:
-    dataset.loc[ dataset['FamilySize'] == 0, 'CategoricalFamilySize'] = 0
-    dataset.loc[(dataset['FamilySize'] > 0) & (dataset['FamilySize'] <= 3), 'CategoricalFamilySize'] = 1
-    dataset.loc[(dataset['FamilySize'] > 3), 'CategoricalFamilySize'] = 2
-    dataset.CategoricalFamilySize = dataset.CategoricalFamilySize.astype(int)
-
-
- # Mapping Fare
-for dataset in full_data:
-    dataset.loc[ dataset['Fare'] < 50, 'CategoricalFare'] = 0
-    dataset.loc[ dataset['Fare'] >= 50, 'CategoricalFare'] = 1
-    dataset.CategoricalFare = dataset.CategoricalFare.astype(int)
 
 
 # Cleaning data
@@ -184,7 +229,7 @@ train.isnull().sum()
 test.drop(['Cabin'],1)
 test.isnull().sum()
 #Creating dummy variables
-dummy_var = ['CategoricalAge', 'Pclass', 'Sex', 'Embarked', 'CategoricalFare', 'CategoricalFamilySize']
+dummy_var = ['Title','CategoricalAge', 'Pclass', 'Embarked', 'CategoricalFare', 'CategoricalFamilySize']
 predictors = []
 for i in dummy_var:
     dummy = pd.get_dummies(train[i],prefix = i)
@@ -233,7 +278,7 @@ kfold = KFold(n_splits=5)
 scores = cross_val_score(logreg, all_X, all_y, cv=kfold)
 accuracy = scores.mean()
 
-print("The accuracy for Logistic Regression is ",accuracy)
+print("The accuracy for Logistic Regression is", accuracy)
 
 submit("submission_logreg.csv",logreg)
 
@@ -347,7 +392,7 @@ submit("submission_rfc.csv",rfc)
 accuracy = []
 val = [1, 5, 10, 30, 50, 100]
 for i in val:  
-    gbm = GradientBoostingClassifier(n_estimators=i, learning_rate=0.3, max_depth=2)
+    gbm = GradientBoostingClassifier(n_estimators=i, learning_rate=0.1, max_depth=3)
     scores = cross_val_score(gbm, all_X, all_y, cv=kfold)
     accuracy.append(scores.mean())
 
@@ -383,11 +428,11 @@ submit("submission_gbm.csv",gbm)
 ######################################### SVM #########################################
 
 
-val = [1, 5, 10, 100]
+val = [1, 5, 10, 50, 100]
 val = [0.001, 0.01, 0.1, 0.2, 0.3, 0.4, 1]
 accuracy = []
 for i in val:  
-    model = svm.SVC(kernel='rbf', C=5, gamma=i) 
+    model = svm.SVC(kernel='rbf', C=10, gamma=0.1) 
     scores = cross_val_score(model, all_X, all_y, cv=kfold)
     accuracy.append(scores.mean())
 
@@ -402,7 +447,7 @@ n = np.array(np.where(accuracy == np.max(accuracy))) + 1 # because the index sta
 n = n[0,0]
 n
 
-model = svm.SVC(kernel='rbf', C=5, gamma=0.1) 
+model = svm.SVC(kernel='rbf', C=10, gamma=0.1) 
 model.fit(all_X, all_y)
 
 
